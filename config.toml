@@ -1,0 +1,16 @@
+model = "ollama/llama3.1"
+broker = "local_paper"
+delta_environment = "demo"
+enable_live_trading = false
+symbols = ["BTC/INR", "ETH/INR", "SOL/INR", "XRP/INR"]
+benchmark = "BTC/INR"
+start_equity = 10000.0
+game_over_pct = 0.30
+cadence = "daily"
+fee_rate = 0.001
+max_daily_loss_pct = 0.05
+max_price_dev = 0.01
+database = "trader.sqlite3"
+paper_prices = { "BTC/INR" = 6500000.0, "ETH/INR" = 220000.0, "SOL/INR" = 12000.0, "XRP/INR" = 45.0 }
+replacement_weeks = 8
+models = ["ollama/llama3.1", "openai/gpt-4o-mini", "anthropic/claude-3-5-sonnet-latest"]
