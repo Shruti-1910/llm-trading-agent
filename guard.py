@@ -13,6 +13,8 @@ class Limits:
     max_daily_loss_pct: float = 0.05
     max_price_dev: float = 0.01
     fee_rate: float = FEE
+    max_position_pct: float = 0.40
+    max_invested_pct: float = 0.80
 
 @dataclass(frozen=True)
 class Account:
@@ -43,10 +45,10 @@ class Order:
 def tier(equity: float, limits: Limits) -> tuple[float, float]:
     if limits.start <= 0:
         raise ValueError("starting equity must be positive")
-    return (0.0, 0.0) if equity <= limits.game_over else (1.0, 1.0)
+    return (0.0, 0.0) if equity <= limits.game_over else (limits.max_position_pct, limits.max_invested_pct)
 
 def tier_name(equity: float, limits: Limits) -> str:
-    return "GAME OVER" if equity <= limits.game_over else "FULL AUTHORITY"
+    return "GAME OVER" if equity <= limits.game_over else "ACTIVE"
 
 def is_game_over(acct: Account, limits: Limits) -> bool:
     return acct.equity <= limits.game_over
@@ -60,6 +62,13 @@ def check(order: Order, acct: Account, last_price: float, limits: Limits) -> Opt
     if not math.isfinite(last_price) or last_price <= 0 or abs(order.limit_price / last_price - 1) > limits.max_price_dev:
         return "limit price too far from market"
     if order.side == "sell": return None if order.qty <= acct.qty(order.symbol) else "no shorting"
+    if acct.start_of_day_equity > 0 and acct.day_pnl <= -limits.max_daily_loss_pct * acct.start_of_day_equity:
+        return "daily loss limit hit: no new buys today"
     cost = order.qty * order.limit_price * (1 + limits.fee_rate)
     if cost > acct.cash + 1e-9: return "not enough cash (no borrowing)"
+    max_position, max_invested = tier(acct.equity, limits)
+    if acct.position_value(order.symbol) + cost > max_position * acct.equity + 1e-9:
+        return f"position exceeds {max_position:.0%} cap"
+    if acct.positions_value + cost > max_invested * acct.equity + 1e-9:
+        return f"investment exceeds {max_invested:.0%} cap"
     return None

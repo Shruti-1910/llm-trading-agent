@@ -2,6 +2,8 @@
 
 *how-to · personal project · last updated 2026-10-20*
 
+> **Implementation status:** The checked-in agent uses fixed 40% per-position and 80% total-investment caps, keeps the remaining cash uninvested, blocks new buys after a 5% daily loss, and is intended to run hourly. It does not yet implement the tier schedule or reflection loop described below. Its game-over liquidation is best effort and cannot run while the exchange/API is unreachable; a price gap can cross the floor between checks. “Never reaches 0” is therefore not guaranteed.
+
 ## Purpose
 
 Plan for building a trading bot where an AI model (Claude, GPT, Gemini, a local model, or any other agent)
