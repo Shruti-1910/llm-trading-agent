@@ -1,8 +1,0 @@
-__pycache__/
-*.py[cod]
-trader.sqlite3
-trader.sqlite3-*
-paper_state.json
-.env
-.env.*
-.DS_Store
