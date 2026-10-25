@@ -2,9 +2,11 @@
 import argparse
 import collections
 import random
+
+import numpy as np
 from datetime import datetime, timezone
 
-from trader import charts, config, data, journal, patterns, scoring
+from trader import charts, config, data, edges, journal, paper, patterns, scoring
 
 
 def fmt(ts):
@@ -16,6 +18,19 @@ def cmd_data(args, cfg):
     db_path = config.resolve(cfg["storage"]["market_db"])
     db_path.parent.mkdir(parents=True, exist_ok=True)
     store = data.CandleStore(db_path)
+    if args.action == "research-history":
+        r = cfg["research"]
+        start = int(datetime.strptime(r["global_start"], "%Y-%m-%d")
+                    .replace(tzinfo=timezone.utc).timestamp())
+        end = int(datetime.strptime(r["splice"], "%Y-%m-%d")
+                  .replace(tzinfo=timezone.utc).timestamp()) + 7 * 86400
+        client = data.DeltaCandleClient(r["global_api_base"])
+        n = data.download_range(store, client, m["symbol"], r["global_store_symbol"],
+                                r["resolution"], start, end)
+        count, first, last = store.summary(r["global_store_symbol"], r["resolution"])
+        print(f"Global {m['symbol']} {r['resolution']}: fetched {n}; stored {count} candles, "
+              f"{fmt(first)} -> {fmt(last)}; gaps: {len(store.gaps(r['global_store_symbol'], r['resolution']))}")
+        return
     if args.action == "update":
         client = data.DeltaCandleClient(m["api_base"])
         n = data.update(store, client, m["symbol"], m["resolution"], m["history_days"])
@@ -213,12 +228,159 @@ def cmd_predict(args, cfg):
               f" - {why}")
 
 
+def cmd_edges(args, cfg):
+    import csv
+    r = cfg["research"]
+    store = data.CandleStore(config.resolve(cfg["storage"]["market_db"]))
+    candles = data.load_research(store, cfg)
+    ctx = patterns.Context(candles, cfg["patterns"])
+    ts = lambda d: int(datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+    periods = {name: (ts(r[name][0]), ts(r[name][1]) + 86400) for name in ("train", "check", "seen")}
+    train_years = list(range(int(r["train"][0][:4]), int(r["train"][1][:4]) + 1))
+    min_risk = cfg["prediction"]["min_risk_fee_mult"] * patterns.round_trip_fee_rate(cfg["fees"])
+    runs = {"trend": edges.trend_trades(ctx, cfg["edges"]["trend"], cfg["fees"]),
+            "overshoot": edges.overshoot_trades(ctx, cfg["edges"]["overshoot"], cfg["fees"], min_risk)}
+    print(f"Research data: {len(candles)} 1h candles, {fmt(candles[0].time)} -> {fmt(candles[-1].time)}")
+    out = config.resolve("reports/edges")
+    out.mkdir(parents=True, exist_ok=True)
+    for name, trades in runs.items():
+        trades = [tr for tr in trades if tr.exit_reason != "open"]   # judge closed trades only
+        year = lambda tr: datetime.fromtimestamp(tr.entry_time, timezone.utc).year
+        within = lambda p: [tr for tr in trades if periods[p][0] <= tr.entry_time < periods[p][1]]
+        by_year = {y: edges.summarize([tr for tr in trades if year(tr) == y])
+                   for y in sorted({year(tr) for tr in trades})}
+        print(f"\n=== {name.upper()} ===")
+        print(f"  {'':16s}{'trades':>7s}{'correct':>8s}{'wrong':>7s}{'unsure':>7s}{'accuracy':>10s}"
+              f"{'net R':>9s}{'R/trade':>9s}")
+        def row(label, t):
+            acc = f"{t['accuracy']:.1%}" if t["accuracy"] is not None else "-"
+            print(f"  {label:16s}{t['total']:7d}{t[scoring.CORRECT]:8d}{t[scoring.WRONG]:7d}"
+                  f"{t[scoring.UNSURE]:7d}{acc:>10s}{t['net_total']:+9.1f}{t['net_avg']:+9.3f}")
+        for y, t in by_year.items():
+            tag = " (train)" if y in train_years else ""
+            row(f"{y}{tag}", t)
+        train, check, seen = (edges.summarize(within(p)) for p in ("train", "check", "seen"))
+        print("  " + "-" * 71)
+        row("TRAIN 2019-23", train)
+        row("CHECK 2024-25", check)
+        row("SEEN 2026", seen)
+        if trades:
+            wins = [tr.net_r for tr in trades if tr.net_r > 0]
+            losses = [tr.net_r for tr in trades if tr.net_r <= 0]
+            print(f"  avg winner {np.mean(wins) if wins else 0:+.2f} R, avg loser "
+                  f"{np.mean(losses) if losses else 0:+.2f} R, avg hold {np.mean([tr.hours for tr in trades]) / 24:.1f} days; "
+                  f"buys {sum(tr.direction == patterns.UP for tr in trades)}, sells "
+                  f"{sum(tr.direction == patterns.DOWN for tr in trades)}")
+        ok, why = edges.verdict(by_year, train_years, train, check)
+        print(f"  *** VERDICT: {'PASS' if ok else 'FAIL'} - {why}")
+        with open(out / f"{name}.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["entry_time", "direction", "entry", "stop", "target", "exit_time", "exit_price",
+                        "exit_reason", "result", "gross_r", "net_r", "hours"])
+            for tr in trades:
+                w.writerow([fmt(tr.entry_time), tr.direction, tr.entry, tr.stop, tr.target,
+                            fmt(int(ctx.t[tr.exit_index])), tr.exit_price, tr.exit_reason,
+                            tr.result, round(tr.gross_r, 3), round(tr.net_r, 3), tr.hours])
+    print(f"\nTrade lists written to {out}")
+
+
+def notify(lines):
+    """macOS notification (best effort)."""
+    import subprocess
+    import sys
+    if sys.platform != "darwin" or not lines:
+        return
+    text = "; ".join(lines).replace('"', "'")[:240]
+    subprocess.run(["osascript", "-e", f'display notification "{text}" with title "Paper trading"'],
+                   check=False)
+
+
+def paper_status(book, cfg, state):
+    p = cfg["paper"]
+    start = state.get("start_time")
+    print(f"Paper trading since {fmt(start)}  |  account ${book.equity:,.2f} "
+          f"(start ${p['start_capital']:,.0f})  |  closed trades net {book.net_r:+.2f} R  |  "
+          f"worst drawdown {book.max_drawdown_r:.2f} R")
+    if book.paused_since:
+        print(f"!! PAUSED since {fmt(book.paused_since)}: drawdown reached -{p['pause_drawdown_r']} R. "
+              f"Review, then `python3 -m trader paper resume`.")
+    opened = [r for r in book.rows if r["status"] == "open"]
+    for r in opened:
+        side = "BUY" if r["direction"] == "UP" else "SELL"
+        print(f"OPEN {side} since {fmt(r['entry_time'])} @ {r['entry']:,.0f}  stop now {r['current_stop']:,.0f}  "
+              f"last {r['_mark']:,.0f}  ({r['net_r']:+.2f} R so far)  size {r['size_btc']:.5f} BTC "
+              f"(${r['notional']:,.0f}, risking ${r['risk_usd']:,.2f})")
+    if not opened:
+        print("No open trade.")
+    closed = [r for r in book.rows if r["status"] == "closed"]
+    if closed:
+        print(f"\n  {'entry':18s}{'side':6s}{'entry':>10s}{'exit':>10s}  {'reason':7s}{'R':>7s}{'USD':>10s}")
+        for r in closed:
+            print(f"  {fmt(r['entry_time'])[:16]:18s}{'BUY' if r['direction'] == 'UP' else 'SELL':6s}"
+                  f"{r['entry']:10,.0f}{r['exit_price']:10,.0f}  {r['exit_reason']:7s}"
+                  f"{r['net_r']:+7.2f}{r['pnl_usd']:+10.2f}")
+    ok, checks = paper.graduation(book, cfg)
+    print("\nReady for real money? " + ("YES - all checks met (decide with the user)" if ok else "not yet"))
+    for label, passed, value in checks:
+        print(f"  [{'x' if passed else ' '}] {label}: {value}")
+
+
+def cmd_paper(args, cfg):
+    m, r = cfg["market"], cfg["research"]
+    state = paper.State(config.resolve(cfg["storage"]["journal_db"]))
+    if args.action == "start":
+        if state.get("start_time"):
+            print(f"Paper trading already started at {fmt(state.get('start_time'))}.")
+            return
+        state.set("start_time", paper.now())
+        state.set("resumes", [])
+        print(f"Paper trading started at {fmt(state.get('start_time'))}. "
+              f"Only daily closes after this can open trades.")
+        return
+    if not state.get("start_time"):
+        print("Paper trading not started. Run: python3 -m trader paper start")
+        return
+    if args.action == "resume":
+        state.set("resumes", state.get("resumes", []) + [paper.now()])
+        print("Resumed: new paper trades may open again.")
+    store = data.CandleStore(config.resolve(cfg["storage"]["market_db"]))
+    if args.action == "update":
+        client = data.DeltaCandleClient(m["api_base"])
+        n = data.update(store, client, m["symbol"], "1h", m["history_days"])
+        print(f"Fetched {n} new 1h candles.")
+    splice = int(datetime.strptime(r["splice"], "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+    candles = store.load(m["symbol"], "1h", start=splice)
+    ctx = patterns.Context(candles, cfg["patterns"])
+    print(f"Latest closed candle: {fmt(candles[-1].time)}")
+    book = paper.replay(ctx, cfg, state.get("start_time"), state.get("resumes", []))
+    old = state.stored_trades()
+    out = config.resolve("reports/paper")
+    out.mkdir(parents=True, exist_ok=True)
+    for row in book.rows:
+        path = out / f"trade_{datetime.fromtimestamp(row['entry_time'], timezone.utc):%Y%m%d}.png"
+        prev = old.get(row["entry_time"])
+        if row["status"] == "open" or not prev or prev["status"] == "open" or not path.exists():
+            charts.trend_snapshot(ctx, row, path)
+        row["snapshot"] = str(path)
+    changes = paper.events(old, book.rows)
+    was_paused = state.get("paused_since")
+    if book.paused_since and book.paused_since != was_paused:
+        changes.append(f"PAUSED: drawdown reached -{cfg['paper']['pause_drawdown_r']} R")
+    state.set("paused_since", book.paused_since)
+    state.save_trades([{k: v for k, v in row.items() if not k.startswith("_")} for row in book.rows])
+    for c in changes:
+        print(">> " + c)
+    paper_status(book, cfg, state)
+    if args.notify:
+        notify(changes)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="trader")
     parser.add_argument("--resolution", help="candle size to use instead of config.toml (e.g. 15m, 1h)")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("data", help="download or inspect market candles")
-    p.add_argument("action", choices=["update", "status"])
+    p.add_argument("action", choices=["update", "status", "research-history"])
     p = sub.add_parser("patterns", help="scan stored candles for chart patterns")
     p.add_argument("action", choices=["scan"])
     p.add_argument("--snapshots", type=int, default=0, help="chart images per pattern")
@@ -232,6 +394,11 @@ def main():
                    help="train = up to [testing] train_end, test = after it")
     p.add_argument("--snapshots", type=int, default=0,
                    help="chart images per pattern for correct and for wrong predictions")
+    p = sub.add_parser("edges", help="backtest the new edge ideas (trend, overshoot)")
+    p.add_argument("action", choices=["backtest"])
+    p = sub.add_parser("paper", help="paper-trade the trend-following edge on live candles")
+    p.add_argument("action", choices=["start", "update", "status", "resume"])
+    p.add_argument("--notify", action="store_true", help="macOS notification on new/closed trades")
     args = parser.parse_args()
     cfg = config.load()
     if getattr(args, "exit", "x") is None:
@@ -252,6 +419,10 @@ def main():
         cmd_patterns(args, cfg)
     elif args.command == "predict":
         cmd_predict(args, cfg)
+    elif args.command == "edges":
+        cmd_edges(args, cfg)
+    elif args.command == "paper":
+        cmd_paper(args, cfg)
 
 
 if __name__ == "__main__":

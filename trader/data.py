@@ -156,3 +156,22 @@ def update(store, client, symbol, resolution, history_days, now=None):
         store.insert(symbol, resolution, candles)
         fetched += len(candles)
     return fetched
+
+
+def download_range(store, client, api_symbol, store_symbol, resolution, start, end):
+    """Fetch [start, end] from `client` and store it under `store_symbol`. Returns count."""
+    candles = client.fetch(api_symbol, resolution, start, end)
+    store.insert(store_symbol, resolution, candles)
+    return len(candles)
+
+
+def load_research(store, cfg):
+    """Delta global candles before the splice date, then Delta India candles."""
+    from datetime import datetime, timezone
+    r, m = cfg["research"], cfg["market"]
+    splice = int(datetime.strptime(r["splice"], "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+    older = store.load(r["global_store_symbol"], r["resolution"], end=splice - 1)
+    india = store.load(m["symbol"], r["resolution"], start=splice)
+    if older and older[-1].time + RESOLUTION_SECONDS[r["resolution"]] != splice:
+        raise RuntimeError("global history doesn't reach the splice date; run data research-history")
+    return older + india

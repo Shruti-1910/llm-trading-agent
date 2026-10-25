@@ -1,6 +1,6 @@
 # Handover: Pattern-Learning Trading Agent (v2)
 
-You are continuing a build with the user in `/Users/admin/Desktop/trading`. Read this whole file before doing anything.
+You are continuing a build with the user in `/Users/admin/trading`. Read this whole file before doing anything.
 
 ## 1. How to work with this user (most important)
 
@@ -105,7 +105,15 @@ Keep rule now also needs a positive after-fees result (approved; `keep_require_n
 
 **4h view + exit versions (approved 2026-10-25):** group `levels4h` (zones/liquidity/trend from 4h, entries on 1h) and `--exit E1|E2|E3` (`[exits]` in config; E3 = next-zone target capped at 3R, 24 candles; for E3 the keep rule drops the 50% bar). 31 tests pass. Training results (after fees per prediction): levels E1 −0.08 R, E2 −0.03 R, **E3 +0.07 R** (131 predictions); levels4h is worse in every version (−0.27 to −0.30 R). Random hourly buy = −0.19 R. sweep_sell loses in every version (−0.20 R). Details in docs/levels-strategy.md.
 **One-time 2026 test DONE (user chose: 1h levels + E3, sweep_sell dropped, judged as one strategy; `--group candidate`):** train PASS (88 predictions, +0.21 R each) → **test FAIL** (47 predictions, 2 C / 22 W / 23 U, −0.23 R each). No bug found in charts. Cause: training was a bull market (43k→123k), 2026 fell (88k→58k); the edge was trend drift. **2026 is now spent as a test set**; don't tune on it.
-Status: after ~25 rule/timeframe/exit variants, no edge has survived. Don't build Modules 4–7 (real-money trading) on this. Options offered to the user: commit the work; build paper mode to collect fresh live data for shadow strategies (new hold-out); research a different kind of edge; or pause.
+**New edge research (user chose option 3, 2026-10-25):** approved: Delta global history from 2019 (spliced to India at 2024-03-01, India's Jan–Feb 2024 prices are frozen), split train 2019–23 / check 2024–25 / 2026 seen, pass rule = positive on train + ≥4/5 training years + positive check; ideas A (trend following, trailing stop, funding 0.01%/8h) and C (liquidation overshoot). See `docs/edges.md`, `trader/edges.py`, `python3 -m trader edges backtest`. 37 tests pass.
+Results: **A FAIL but closest yet**: train +30.5 R (3/5 years positive), check 0.0 R, 2026 +5.4 R; all 92 trades +0.39 R each, t-stat 1.7, depends on the 5 biggest trades. **C FAIL** clearly (−0.71 R/trade on train). Awaiting the user's decision (don't change the pass rule without them).
+
+**Robustness (user chose, training years only):** 9 nearby trend settings (breakout 15/20/30 days × trail 2.5/3.0/3.5 ATR) are all positive on 2019–23 (+14.7 to +37.0 R); approved 20/3.0 kept (no picking).
+**PAPER TRADING LIVE (started 2026-10-25 17:36 UTC):** trend following on Delta India 1h candles, `trader/paper.py`, `[paper]` in config. Approved: daily macOS job (`~/Library/LaunchAgents/com.trader.paper.plist`, 06:00 IST, runs `python3 -m trader paper update --notify`, log `reports/paper/paper.log`); $1,000 simulated account, 1% risk capped at 10% of capital per position (cap lowers risk to ~0.4–0.8%; 2026 replay would have made +$25.75); graduation = ≥12 closed trades + positive after fees/funding + drawdown never ≤ −8 R (−8 R also pauses entries until `paper resume`). Replays all candles since start each run (deterministic). Paper state lives in `data/journal.sqlite3` (git-ignored; don't delete it). Commands: `paper start|update|status|resume`.
+**Project moved** from ~/Desktop/trading to **/Users/admin/trading** (user approved): macOS blocks background jobs from reading Desktop. 42 tests pass.
+Next: wait for paper trades (~1/month). Real money only after graduation AND the user's decision; Modules 5–7 (sizing under leverage, kill switch, daily limits) must be confirmed before any live trading.
+
+Status: after ~27 rule/timeframe/exit variants, no edge has passed its rule; trend following is in paper trading. Don't build Modules 4–7 (real-money trading) on this. Options offered to the user: commit the work; build paper mode to collect fresh live data for shadow strategies (new hold-out); research a different kind of edge; or pause.
 
 ## 7. Remaining roadmap (confirm each before building)
 

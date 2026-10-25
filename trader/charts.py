@@ -43,3 +43,32 @@ def snapshot(ctx, signal, path, after=8, before=10, horizon=6):
     fig.tight_layout()
     fig.savefig(path, dpi=90)
     plt.close(fig)
+
+
+def trend_snapshot(ctx, row, path, days_before=10, days_after=2):
+    """Chart of a paper trend trade: 1h closes, entry, initial stop, stop now/at exit, exit."""
+    i0, i1 = row["_index"]
+    s0 = max(0, i0 - days_before * 24)
+    s1 = min(len(ctx.c) - 1, i1 + days_after * 24)
+    xs = list(range(s0, s1 + 1))
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(xs, ctx.c[s0:s1 + 1], color="#455a64", linewidth=1)
+    ax.fill_between(xs, ctx.l[s0:s1 + 1], ctx.h[s0:s1 + 1], color="#b0bec5", alpha=0.4, linewidth=0)
+    ax.hlines(row["entry"], i0, i1, colors="#333", linewidth=1, label="entry")
+    ax.hlines(row["initial_stop"], i0, i1, colors="#ef5350", linestyle=":", linewidth=1,
+              label="initial stop")
+    if row["current_stop"] is not None:
+        label = "stop now" if row["status"] == "open" else "stop at exit"
+        ax.hlines(row["current_stop"], i0, i1, colors="#ef5350", linewidth=1, label=label)
+    if row["status"] == "closed":
+        ax.plot([i1], [row["exit_price"]], "o", color="#26a69a" if row["net_r"] > 0 else "#ef5350",
+                label=f"exit ({row['exit_reason']})")
+    ax.axvline(i0, color="#999", linestyle="--", linewidth=0.8)
+    side = "BUY" if row["direction"] == "UP" else "SELL"
+    when = datetime.fromtimestamp(row["entry_time"], timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    state = "OPEN" if row["status"] == "open" else "CLOSED"
+    ax.set_title(f"Paper trend {side} @ {when}  [{state}]  {row['net_r']:+.2f} R")
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=90)
+    plt.close(fig)

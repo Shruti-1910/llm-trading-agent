@@ -12,6 +12,7 @@ history_days = 1015        # how far back to download (Delta BTCUSD 5m starts 20
 maker_rate = 0.0002        # 0.02% of position value
 taker_rate = 0.0005        # 0.05% of position value
 gst_rate = 0.18            # 18% GST charged on the fee itself
+funding_rate_8h = 0.0001   # funding charged on every held trade, 0.01% per 8h (conservative; user, 2026-10-25)
 
 [storage]
 data_dir = "data"
@@ -94,6 +95,43 @@ E3 = { horizon = 24, target = "zone", max_reward_risk = 3.0 }
 # >= keep_min_decided decided and positive after fees (E3 -> no accuracy bar).
 setups = ["sweep_buy", "pullback_buy", "pullback_sell"]
 exit = "E3"
+
+[research]
+# Longer history for new edge research (user, 2026-10-25): Delta global BTCUSD 1h from
+# mid-2019, then Delta India data from `splice` on.
+global_api_base = "https://api.delta.exchange"
+global_store_symbol = "BTCUSD@global"
+global_start = "2019-06-01"
+splice = "2024-03-01"        # switch to Delta India here: its first weeks (Jan-Feb 2024) have frozen prices
+resolution = "1h"
+train = ["2019-07-01", "2023-12-31"]     # bull and bear years
+check = ["2024-01-01", "2025-12-31"]     # hold-out for these ideas
+seen = ["2026-01-01", "2026-12-31"]      # already looked at (bear market): second look only
+
+[edges.trend]
+# Edge A, trend following (approved 2026-10-25)
+breakout_days = 20       # daily close above the highest daily high of the previous 20 days
+average_days = 50        # ... and above the 50-day average (mirror for sells)
+atr_days = 14            # daily ATR
+initial_stop_atr = 2.0   # initial stop 2 x daily ATR
+trail_atr = 3.0          # trailing stop 3 x daily ATR behind the best price
+max_days = 30            # exit at the latest after 30 days
+
+[edges.overshoot]
+# Edge C, liquidation overshoot (approved 2026-10-25)
+range_atr = 3.0          # extreme 1h candle: range >= 3 x ATR
+volume_mult = 3.0        # ... and volume >= 3 x the 20-candle average
+retrace = 0.5            # target = midpoint of the extreme candle
+min_reward_risk = 1.5    # skip if the target is less than 1.5 x risk away
+horizon = 24             # judged within 24 candles (also the cooldown)
+
+[paper]
+# Paper trading of trend following (user, 2026-10-25). No orders, no money.
+start_capital = 1000.0       # simulated USD account
+risk_pct = 0.01              # risk 1% of equity per trade ...
+max_notional_pct = 0.10      # ... but position value at most 10% of equity (plan rule)
+graduate_min_trades = 12     # proved itself: >= 12 closed trades,
+pause_drawdown_r = 8.0       # positive after costs, drawdown never <= -8 R (also pauses new entries)
 
 [testing]
 # Train/test split (user, 2026-10-25): build and tune on data up to train_end,
