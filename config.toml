@@ -1,0 +1,101 @@
+# Trading agent configuration. Every business rule lives here so it can be reviewed.
+
+[market]
+exchange = "delta_india"
+api_base = "https://api.india.delta.exchange"
+symbol = "BTCUSD"          # BTC perpetual future, settled in USD
+resolution = "1h"          # candle size (user, 2026-10-25: 1h; was 5m)
+history_days = 1015        # how far back to download (Delta BTCUSD 5m starts 2024-01-15)
+
+[fees]
+# From Delta's /v2/products for BTCUSD (verify before going live).
+maker_rate = 0.0002        # 0.02% of position value
+taker_rate = 0.0005        # 0.05% of position value
+gst_rate = 0.18            # 18% GST charged on the fee itself
+
+[storage]
+data_dir = "data"
+market_db = "data/market.sqlite3"
+journal_db = "data/journal.sqlite3"
+
+[patterns]
+# Module 2 detection rules. See docs/pattern-rules.md.
+atr_period = 14
+swing_k = 3                  # swing = extreme of k candles on each side
+equal_tol_atr = 0.5          # levels within this many ATR are "equal"
+breakout_atr = 0.1           # close must clear the line by this many ATR
+volume_mult = 1.5            # triangle breakouts need volume >= this x 20-candle average
+volume_avg_period = 20
+max_pattern_candles = 144    # 12 hours of 5m candles
+flag_pole_atr = 3.0
+flag_pole_max_candles = 12
+flag_min_candles = 5
+flag_max_candles = 30
+flag_slope_tol = 0.3
+flag_max_retrace = 0.5
+double_min_gap = 10
+double_neck_atr = 1.5
+hs_shoulder_tol_atr = 1.0
+rounded_windows = [48, 72, 96, 144]
+rounded_min_r2 = 0.7
+rounded_vertex_range = [0.3, 0.7]
+rounded_depth_atr = 3.0
+cup_rim_tol_atr = 1.0
+cup_handle_max_frac = 0.333
+cup_handle_max_retrace = 0.5
+cup_handle_min_candles = 3
+
+[patterns.levels]
+# Levels strategy (approved 2026-10-25, docs/levels-strategy.md). Swings use swing_k above.
+zone_lookback = 200          # candles of history used to find zones and equal highs/lows
+zone_tol_atr = 0.5           # swing points within 0.5 ATR form one support/resistance zone
+zone_min_touches = 2         # a zone needs at least 2 swing points
+equal_tol_atr = 0.25         # liquidity: equal highs/lows within 0.25 ATR
+trend_ema = 200              # trend = swing structure agrees with price vs 200-candle average
+strong_body_frac = 0.6       # strong candle: body >= 60% of its range
+strong_close_zone = 0.25     #   ... closes in the top/bottom 25%
+strong_min_atr = 1.0         #   ... range >= 1 x ATR
+rejection_wick_frac = 0.5    # rejection candle: wick into the level >= 50% of the candle
+sweep_volume_mult = 1.5      # setup A needs volume >= 1.5 x 20-candle average
+pullback_volume_mult = 1.2   # setup B needs volume >= 1.2 x 20-candle average
+pullback_window = 3          # setup B: the dip into the zone/trendline is within the last 3 candles
+stop_buffer_atr = 0.1        # stop sits 0.1 ATR beyond the sweep wick / pullback extreme
+htf_resolution = "4h"        # levels4h group: zones, liquidity and trend from 4-hour candles
+
+[prediction]
+horizon_candles = 6          # N: judge the prediction within 6 candles (30 min)
+reward_risk = 1.5            # target = entry +/- 1.5 x risk
+min_risk_fee_mult = 2.0      # skip if stop distance < 2 x round-trip fees
+require_height_covers_target = false  # off: it rejected every flag, double top/bottom (user, 2026-10-25)
+
+[selection]
+# Keep list (user, 2026-10-25): a pattern is KEPT when its backtest has at least
+# keep_min_decided Correct+Wrong results and accuracy >= keep_min_accuracy (~break-even
+# after fees). Other patterns run in SHADOW mode: detected and scored in a separate
+# report, never counted toward accuracy or the unlock, and they can't block kept patterns.
+keep_min_decided = 30
+keep_min_accuracy = 0.50
+keep_require_net_positive = true   # also needs average result after fees > 0, Unsure included (user, 2026-10-25)
+# Zone targets (exit E3) vary in size, so the fixed accuracy bar is dropped for them:
+# >= keep_min_decided and positive after fees only (user, 2026-10-25).
+
+[exits]
+# Exit versions compared on the training data (user, 2026-10-25). Pick with --exit.
+# target = "fixed" (reward_risk x risk) or "zone" (next opposing zone, capped at max_reward_risk).
+# horizon = candles to judge the prediction (also the cooldown length).
+default = "E1"
+E1 = { horizon = 6,  target = "fixed" }
+E2 = { horizon = 24, target = "fixed" }
+E3 = { horizon = 24, target = "zone", max_reward_risk = 3.0 }
+
+[candidate]
+# Strategy sent to the one-time 2026 test (user, 2026-10-25): 1h levels setups with exit E3,
+# sweep_sell dropped (lost in every training version), judged as ONE strategy:
+# >= keep_min_decided decided and positive after fees (E3 -> no accuracy bar).
+setups = ["sweep_buy", "pullback_buy", "pullback_sell"]
+exit = "E3"
+
+[testing]
+# Train/test split (user, 2026-10-25): build and tune on data up to train_end,
+# then check once on the later data.
+train_end = "2025-12-31"
