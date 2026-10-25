@@ -81,8 +81,10 @@ Snapshot review: flag, cup and handle, double top, head and shoulders and stairc
 
 ## 5. Git state
 
-- `main`: commit `f84fdd8` ("Clear v1 project…"). Everything in §4 is **uncommitted**. Ask the user before committing.
+- `v2-research`: commit `fe1af62`, all v2 work (Modules 1–3, levels strategy, tests, docs). Created from `main` at the user's request to commit (2026-10-25); merge into `main` when the user wants.
+- `main`: commit `f84fdd8` ("Clear v1 project…").
 - `archive/v1`: the full old project.
+- `data/` and `reports/` are git-ignored (rebuild with `python3 -m trader data update`).
 
 ## 6. Module 3 DONE (2026-10-25), next decision pending
 
