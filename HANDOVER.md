@@ -128,3 +128,11 @@ Status: after ~27 rule/timeframe/exit variants, no edge has passed its rule; tre
 | 10 | Rollout: backtest runner → paper trading on live candles → Delta futures (demo first) | 13 |
 
 Expect the 80–85% gate to be hard to reach. A 1.5R target needs ~40% before fees but **~50% after fees** at our typical stop size. If Module 3 shows real accuracies far below 80%, present that honestly and let the user decide; don't change the gate yourself.
+
+
+## 2026-10-30: multi-market research (user chose option B, plan approved)
+- New: trader/markets.py, command `python3 -m trader markets backtest [--market ...] [--refresh]`, tests/test_markets.py (46 tests pass).
+- Three research agents (crypto / India / commodities) ran the unchanged trend rules. Summary in docs/markets.md.
+- PASS: ETH, BNB (narrow), BTC on Binance daily (narrow). FAIL: SOL, XRP, NIFTY, BANKNIFTY, USDINR, GOLD, SILVER, CRUDE.
+- First paper trade: SELL BTC 2026-10-29 23:00 UTC @ 77,963, stop 81,916, risking $5.07.
+- Pending user decision: whether to add ETH (and BNB?) to paper trading.

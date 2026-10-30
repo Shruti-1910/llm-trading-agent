@@ -375,6 +375,60 @@ def cmd_paper(args, cfg):
         notify(changes)
 
 
+def cmd_markets(args, cfg):
+    from trader import markets
+    names = list(markets.MARKETS) if args.market == ["all"] else args.market
+    cache = config.resolve("data/markets")
+    out = config.resolve("reports/markets")
+    out.mkdir(parents=True, exist_ok=True)
+    e = cfg["edges"]["trend"]
+    results = {}
+    for name in names:
+        d = markets.load(name, cache, refresh=args.refresh)
+        trades = markets.trend_trades(d, e, markets.fees_for(name))
+        ev = markets.evaluate(trades)
+        results[name] = trades
+        print(f"\n=== {name} ({markets.MARKETS[name][1]}, {markets.MARKETS[name][2]}) ===  "
+              f"{len(d['c'])} daily candles, {fmt(d['t'][0])[:10]} -> {fmt(d['t'][-1])[:10]}")
+        print(f"  {'':12s}{'trades':>7s}{'win':>5s}{'loss':>5s}{'net R':>8s}{'R/trade':>9s}")
+        row = lambda label, t: print(f"  {label:12s}{t['total']:7d}{t[scoring.CORRECT]:5d}"
+                                     f"{t[scoring.WRONG]:5d}{t['net_total']:+8.1f}{t['net_avg']:+9.2f}")
+        for y, t in ev["by_year"].items():
+            row(f"{y}{' (train)' if y in markets.TRAIN_YEARS else ''}", t)
+        print("  " + "-" * 46)
+        if ev["early"]["total"]:
+            row("pre-2019", ev["early"])
+        row("TRAIN 19-23", ev["train"])
+        row("CHECK 24-25", ev["check"])
+        row("SEEN 2026", ev["seen"])
+        st = ev["stats"]
+        if st:
+            top = f"{st['top5_share']:.0%}" if st["top5_share"] is not None else "-"
+            print(f"  all: {st['trades']} trades, {st['net_total']:+.1f} R, {st['net_avg']:+.2f} R/trade, "
+                  f"t-stat {st['t_stat']:.1f}, win rate {st['win_rate']:.0%}, max drawdown {st['max_dd']:.1f} R, "
+                  f"top-5 trades = {top} of profit")
+        for tr in ev["open"]:
+            print(f"  open {tr.direction} since {fmt(tr.entry_time)[:10]} @ {tr.entry:,.2f} ({tr.net_r:+.2f} R so far)")
+        print(f"  *** VERDICT: {'PASS' if ev['pass'] else 'FAIL'} - {ev['why']}")
+        with open(out / f"{name}.csv", "w", newline="") as f:
+            import csv
+            w = csv.writer(f)
+            w.writerow(["entry_date", "direction", "entry", "stop", "exit_date", "exit_price",
+                        "exit_reason", "result", "gross_r", "net_r", "days"])
+            for tr in trades:
+                w.writerow([fmt(tr.entry_time)[:10], tr.direction, tr.entry, round(tr.stop, 6),
+                            fmt(int(d["t"][tr.exit_index]))[:10], tr.exit_price, tr.exit_reason,
+                            tr.result, round(tr.gross_r, 3), round(tr.net_r, 3), round(tr.hours / 24, 1)])
+    if len(results) > 1:
+        pf = markets.portfolio(results)
+        print(f"\n=== PORTFOLIO ({', '.join(results)}; 1R per trade, by exit year) ===")
+        for y, r in sorted(pf["by_year"].items()):
+            print(f"  {y}: {r:+.1f} R")
+        print(f"  all: {pf['trades']} trades, {pf['net_total']:+.1f} R, {pf['net_avg']:+.2f} R/trade, "
+              f"max drawdown {pf['max_dd']:.1f} R")
+    print(f"\nTrade lists written to {out}")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="trader")
     parser.add_argument("--resolution", help="candle size to use instead of config.toml (e.g. 15m, 1h)")
@@ -396,6 +450,10 @@ def main():
                    help="chart images per pattern for correct and for wrong predictions")
     p = sub.add_parser("edges", help="backtest the new edge ideas (trend, overshoot)")
     p.add_argument("action", choices=["backtest"])
+    p = sub.add_parser("markets", help="test the trend rules on other markets (daily candles)")
+    p.add_argument("action", choices=["backtest"])
+    p.add_argument("--market", nargs="+", default=["all"], help="names from trader/markets.py, or all")
+    p.add_argument("--refresh", action="store_true", help="re-download daily candles")
     p = sub.add_parser("paper", help="paper-trade the trend-following edge on live candles")
     p.add_argument("action", choices=["start", "update", "status", "resume"])
     p.add_argument("--notify", action="store_true", help="macOS notification on new/closed trades")
@@ -421,6 +479,8 @@ def main():
         cmd_predict(args, cfg)
     elif args.command == "edges":
         cmd_edges(args, cfg)
+    elif args.command == "markets":
+        cmd_markets(args, cfg)
     elif args.command == "paper":
         cmd_paper(args, cfg)
 
